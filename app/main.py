@@ -8,14 +8,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database import Base, engine, get_db
+from app.database import ensure_schema, get_db
 from app.models import Task
 from app.queue import enqueue
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     yield
 
 
@@ -33,7 +33,8 @@ class TaskRequest(BaseModel):
 def serialize(task: Task):
     return {"task_id": task.id, "kind": task.kind, "status": task.status, "priority": task.priority,
             "run_at": task.run_at, "attempts": task.attempts, "max_attempts": task.max_attempts,
-            "result": json.loads(task.result) if task.result else None, "error": task.error}
+            "result": json.loads(task.result) if task.result else None, "error": task.error,
+            "lease_owner": task.lease_owner, "lease_expires_at": task.lease_expires_at}
 
 
 @app.get("/health")
@@ -63,6 +64,14 @@ def create_task(request: TaskRequest, db: Session = Depends(get_db), idempotency
     db.refresh(task)
     enqueue(task.id, run_at.timestamp(), task.priority)
     return serialize(task)
+
+
+@app.get("/api/v1/tasks/dead-letter")
+def list_dead_letter_tasks(db: Session = Depends(get_db), limit: int = 50):
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    return [serialize(task) for task in db.query(Task).filter(Task.status == "failed")
+            .order_by(Task.updated_at.desc()).limit(limit)]
 
 
 @app.get("/api/v1/tasks/{task_id}")

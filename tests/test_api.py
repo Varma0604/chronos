@@ -16,3 +16,10 @@ def test_task_creation_is_idempotent(monkeypatch):
         assert first.status_code == 202
         assert second.status_code == 202
         assert first.json()["task_id"] == second.json()["task_id"]
+
+
+def test_dead_letter_route_is_not_captured_as_a_task_id():
+    with TestClient(app) as client:
+        response = client.get("/api/v1/tasks/dead-letter")
+    assert response.status_code == 200
+    assert response.json() == []

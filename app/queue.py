@@ -2,7 +2,7 @@ import time
 
 import redis
 
-from app.config import QUEUE_KEY, REDIS_URL
+from app.config import DEAD_LETTER_QUEUE_KEY, QUEUE_KEY, REDIS_URL, WORKER_LEASE_SECONDS
 
 client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -16,6 +16,11 @@ def enqueue(task_id: str, run_at_epoch: float, priority: int):
     client.zadd(QUEUE_KEY, {task_id: _score(run_at_epoch, priority)})
 
 
+def dead_letter(task_id: str):
+    """Keep a durable Redis reference to a task that exhausted its retries."""
+    client.lpush(DEAD_LETTER_QUEUE_KEY, task_id)
+
+
 def pop_due() -> str | None:
     now = time.time() * 100 + 99
     candidates = client.zrangebyscore(QUEUE_KEY, "-inf", now, start=0, num=1)
@@ -26,18 +31,20 @@ def pop_due() -> str | None:
 
 
 def requeue_stale_rows(db):
-    """Heal a crash between committing a task and placing it in Redis."""
+    """Repair lost queue entries and recover work whose worker lease expired."""
     from app.models import Task
     import datetime as dt
-    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)
+    now = dt.datetime.now(dt.timezone.utc)
     rows = db.query(Task).filter(
         (Task.status == "queued") | ((Task.status == "retrying") & (Task.run_at <= dt.datetime.now(dt.timezone.utc))) |
-        ((Task.status == "running") & (Task.updated_at <= cutoff))
+        ((Task.status == "running") & (Task.lease_expires_at <= now))
     ).all()
     for task in rows:
         if task.status == "running":
             task.status = "queued"
-            task.error = "Worker lease expired; task will be retried (handler may run more than once)."
+            task.lease_owner = None
+            task.lease_expires_at = None
+            task.error = "Worker lease expired; task was requeued (handler may run more than once)."
             db.commit()
         run_at = task.run_at
         if run_at.tzinfo is None:

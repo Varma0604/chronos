@@ -1,14 +1,18 @@
 import json
 import logging
+import os
+import socket
 import time
 from datetime import datetime, timedelta, timezone
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal, ensure_schema
 from app.models import Task
-from app.queue import client, pop_due, requeue_stale_rows
+from app.config import WORKER_LEASE_SECONDS
+from app.queue import dead_letter, pop_due, requeue_stale_rows
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("chronos.worker")
+WORKER_ID = os.getenv("WORKER_ID", f"{socket.gethostname()}-{os.getpid()}")
 
 
 def execute(kind: str, payload: dict):
@@ -32,14 +36,20 @@ def run_once():
             return True
         task.status = "running"
         task.attempts += 1
+        task.lease_owner = WORKER_ID
+        task.lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=WORKER_LEASE_SECONDS)
         db.commit()
         try:
             value = execute(task.kind, json.loads(task.payload))
             task.result = json.dumps(value)
             task.error = None
             task.status = "succeeded"
+            task.lease_owner = None
+            task.lease_expires_at = None
         except Exception as exc:
             task.error = str(exc)[:1000]
+            task.lease_owner = None
+            task.lease_expires_at = None
             if task.attempts < task.max_attempts:
                 task.status = "retrying"
                 delay = min(60, 2 ** (task.attempts - 1))
@@ -50,12 +60,14 @@ def run_once():
         if task.status == "retrying":
             from app.queue import enqueue
             enqueue(task.id, task.run_at.timestamp(), task.priority)
+        elif task.status == "failed":
+            dead_letter(task.id)
         log.info("task=%s status=%s attempt=%s", task.id, task.status, task.attempts)
     return True
 
 
 def main():
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     while True:
         with SessionLocal() as db:
             requeue_stale_rows(db)
