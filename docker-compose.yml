@@ -6,6 +6,7 @@ services:
     environment: &env
       DATABASE_URL: postgresql+psycopg://chronos:chronos@db:5432/chronos
       REDIS_URL: redis://redis:6379/0
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
