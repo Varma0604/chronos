@@ -25,8 +25,13 @@ Use `GET /api/v1/tasks/{task_id}` to follow execution and `GET /api/v1/tasks` fo
 - Idempotency keys prevent duplicate task creation for the same client request.
 - Failed handlers retry with capped exponential backoff and transition to `failed` after `max_attempts`.
 - A worker lease that remains `running` for over a minute is requeued. This is at-least-once execution: a handler can run again after a crash, so external handlers must be idempotent.
-- Built-in handlers are deterministic demonstrations, not a general-purpose arbitrary-code execution environment.
-- No throughput or recovery-rate benchmark is claimed yet. Measure it using a documented workload before publishing performance figures.
+- Built-in handlers are deterministic demonstrations, not a general-purpose arbitrary-code execution environment. `echo` and `sum` support normal demos; the bounded `sleep` handler is used only for repeatable worker-crash recovery testing.
+- **Recorded throughput benchmark (November 2, 2026):** three runs of 300
+  deterministic `sum` tasks, 15 concurrent submitters, and three Docker
+  workers completed all 900 tasks without failure. Median wall-clock time was
+  **5.088 seconds** (**58.96 tasks/second**), with median P50/P95 end-to-end
+  latencies of **3.35s / 4.48s**. This is a local-machine workload, not a
+  production capacity claim.
 
 ## Development
 
@@ -52,3 +57,23 @@ The benchmark submits deterministic `sum` tasks, waits for every task to reach
 configured worker count, throughput, latency percentiles, and failure count.
 It does not infer the actual worker count from Docker; keep the `--workers`
 value aligned with the Compose command used for that run.
+
+## Worker-crash recovery demonstration
+
+For a short, observable recovery test, start one worker with a ten-second
+lease, then use the verification script:
+
+```bash
+WORKER_LEASE_SECONDS=10 docker compose up --build --scale worker=1
+# In a second terminal with the Chronos virtual environment active:
+python scripts/verify_worker_recovery.py --lease-seconds 10
+```
+
+The script submits a 30-second `sleep` task, kills the only worker after it
+claims the task, starts a replacement, and verifies that the replacement
+requeues and completes the task on a later attempt. This demonstrates
+at-least-once processing; an external handler must therefore be idempotent.
+
+**Recorded recovery verification (November 2, 2026):** one deliberately
+terminated in-flight task was requeued and completed successfully on attempt 2
+by a replacement worker.
