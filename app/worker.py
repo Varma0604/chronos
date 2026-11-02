@@ -23,6 +23,12 @@ def execute(kind: str, payload: dict):
         if not isinstance(values, list) or not all(isinstance(x, (int, float)) for x in values):
             raise ValueError("sum task requires a numeric 'values' array")
         return sum(values)
+    if kind == "sleep":
+        seconds = payload.get("seconds")
+        if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not 0 <= seconds <= 120:
+            raise ValueError("sleep task requires numeric 'seconds' from 0 through 120")
+        time.sleep(seconds)
+        return {"slept_seconds": seconds}
     raise ValueError(f"Unknown task kind: {kind}")
 
 
