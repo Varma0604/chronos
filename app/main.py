@@ -23,7 +23,7 @@ app = FastAPI(title="Chronos", description="Durable scheduled workflow engine", 
 
 
 class TaskRequest(BaseModel):
-    kind: str = Field(pattern="^(echo|sum)$")
+    kind: str = Field(pattern="^(echo|sum|sleep)$")
     payload: dict
     run_at: datetime | None = None
     priority: int = Field(default=5, ge=0, le=9)
