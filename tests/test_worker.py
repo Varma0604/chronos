@@ -8,9 +8,13 @@ from app.models import Task
 from app.worker import execute
 
 
-def test_builtin_task_handlers():
+def test_builtin_task_handlers(monkeypatch):
     assert execute("echo", {"value": "hi"}) == "hi"
     assert execute("sum", {"values": [2, 3, 4]}) == 9
+    sleeps = []
+    monkeypatch.setattr(worker.time, "sleep", sleeps.append)
+    assert execute("sleep", {"seconds": 2}) == {"slept_seconds": 2}
+    assert sleeps == [2]
 
 
 def test_final_handler_failure_is_sent_to_dead_letter_queue(monkeypatch):
