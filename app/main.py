@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import ensure_schema, get_db
-from app.models import Task
+from app.models import Task, TaskEvent
 from app.queue import enqueue
 
 
@@ -37,6 +37,14 @@ def serialize(task: Task):
             "lease_owner": task.lease_owner, "lease_expires_at": task.lease_expires_at}
 
 
+def serialize_with_events(task: Task):
+    payload = serialize(task)
+    payload["events"] = [{"type": event.event_type, "message": event.message, "worker_id": event.worker_id,
+                          "created_at": event.created_at}
+                         for event in sorted(task.events, key=lambda item: item.created_at)]
+    return payload
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "chronos"}
@@ -62,6 +70,8 @@ def create_task(request: TaskRequest, db: Session = Depends(get_db), idempotency
         existing = db.query(Task).filter(Task.idempotency_key == idempotency_key).one()
         return serialize(existing)
     db.refresh(task)
+    task.events.append(TaskEvent(event_type="created", message="Task accepted and queued."))
+    db.commit()
     enqueue(task.id, run_at.timestamp(), task.priority)
     return serialize(task)
 
@@ -79,7 +89,7 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return serialize(task)
+    return serialize_with_events(task)
 
 
 @app.get("/api/v1/tasks")
