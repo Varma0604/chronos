@@ -32,7 +32,7 @@ def pop_due() -> str | None:
 
 def requeue_stale_rows(db):
     """Repair lost queue entries and recover work whose worker lease expired."""
-    from app.models import Task
+    from app.models import Task, TaskEvent
     import datetime as dt
     now = dt.datetime.now(dt.timezone.utc)
     rows = db.query(Task).filter(
@@ -41,10 +41,13 @@ def requeue_stale_rows(db):
     ).all()
     for task in rows:
         if task.status == "running":
+            expired_owner = task.lease_owner
             task.status = "queued"
             task.lease_owner = None
             task.lease_expires_at = None
             task.error = "Worker lease expired; task was requeued (handler may run more than once)."
+            task.events.append(TaskEvent(event_type="lease_expired", worker_id=expired_owner,
+                                         message="Worker lease expired; task was requeued for at-least-once recovery."))
             db.commit()
         run_at = task.run_at
         if run_at.tzinfo is None:
