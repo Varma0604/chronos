@@ -76,3 +76,45 @@ def test_expired_worker_lease_requeues_task(monkeypatch):
         assert task.lease_expires_at is None
         assert "lease expired" in task.error.lower()
         assert task.events[-1].event_type == "lease_expired"
+
+
+def test_task_can_run_twice_when_worker_crashes_after_side_effect(monkeypatch):
+    """Document Chronos's at-least-once contract around a commit-boundary crash.
+
+    The first entry models an external side effect that completed just before a
+    worker process died, leaving no persisted success transition. Lease repair
+    must requeue the task, so the replacement worker executes it again.
+    """
+    task_id = "commit-boundary-crash-task"
+    executions = ["first worker completed external side effect"]
+    with SessionLocal() as db:
+        db.add(Task(
+            id=task_id,
+            kind="echo",
+            payload=json.dumps({"value": "replayed"}),
+            status="running",
+            attempts=1,
+            priority=5,
+            run_at=datetime.now(timezone.utc),
+            max_attempts=3,
+            lease_owner="worker-that-died-after-execute",
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        ))
+        db.commit()
+
+    queued = []
+    monkeypatch.setattr(queue, "enqueue", lambda *args: queued.append(args))
+    with SessionLocal() as db:
+        queue.requeue_stale_rows(db)
+
+    monkeypatch.setattr(worker, "pop_due", lambda: task_id)
+    monkeypatch.setattr(worker, "execute", lambda *_: executions.append("replacement worker replayed") or "replayed")
+    assert worker.run_once() is True
+
+    assert queued and queued[0][0] == task_id
+    assert executions == ["first worker completed external side effect", "replacement worker replayed"]
+    with SessionLocal() as db:
+        task = db.get(Task, task_id)
+        assert task.status == "succeeded"
+        assert task.attempts == 2
+        assert [event.event_type for event in task.events] == ["lease_expired", "claimed", "succeeded"]
