@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal, ensure_schema
-from app.models import Task
+from app.models import Task, TaskEvent
 from app.config import WORKER_LEASE_SECONDS
 from app.queue import dead_letter, pop_due, requeue_stale_rows
 
@@ -44,12 +44,16 @@ def run_once():
         task.attempts += 1
         task.lease_owner = WORKER_ID
         task.lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=WORKER_LEASE_SECONDS)
+        task.events.append(TaskEvent(event_type="claimed", worker_id=WORKER_ID,
+                                     message=f"Claimed by worker; attempt {task.attempts}."))
         db.commit()
         try:
             value = execute(task.kind, json.loads(task.payload))
             task.result = json.dumps(value)
             task.error = None
             task.status = "succeeded"
+            task.events.append(TaskEvent(event_type="succeeded", worker_id=WORKER_ID,
+                                         message="Handler completed successfully."))
             task.lease_owner = None
             task.lease_expires_at = None
         except Exception as exc:
@@ -60,8 +64,12 @@ def run_once():
                 task.status = "retrying"
                 delay = min(60, 2 ** (task.attempts - 1))
                 task.run_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                task.events.append(TaskEvent(event_type="retry_scheduled", worker_id=WORKER_ID,
+                                             message=f"Handler failed; retry scheduled in {delay} seconds."))
             else:
                 task.status = "failed"
+                task.events.append(TaskEvent(event_type="failed", worker_id=WORKER_ID,
+                                             message="Handler exhausted its configured retry budget."))
         db.commit()
         if task.status == "retrying":
             from app.queue import enqueue
