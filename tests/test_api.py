@@ -16,6 +16,9 @@ def test_task_creation_is_idempotent(monkeypatch):
         assert first.status_code == 202
         assert second.status_code == 202
         assert first.json()["task_id"] == second.json()["task_id"]
+        detail = client.get(f"/api/v1/tasks/{first.json()['task_id']}")
+        assert detail.status_code == 200
+        assert detail.json()["events"][0]["type"] == "created"
 
 
 def test_dead_letter_route_is_not_captured_as_a_task_id():
