@@ -1,6 +1,6 @@
 # Chronos
 
-Chronos is a small durable task scheduler. A FastAPI service stores task definitions and state transitions in a configured SQL database, then places task IDs in a Redis sorted-set queue. A separate worker claims due tasks, runs a registered handler, and records the outcome. The Docker Compose deployment uses PostgreSQL and Redis; the local development default is SQLite.
+Chronos is a small durable task scheduler. A FastAPI service stores task definitions and an append-only execution timeline in a configured SQL database, then places task IDs in a Redis sorted-set queue. A separate worker claims due tasks, runs a registered handler, and records the outcome. The Docker Compose deployment uses PostgreSQL and Redis; the local development default is SQLite.
 
 ## Run locally
 
@@ -17,7 +17,7 @@ curl -X POST http://localhost:8001/api/v1/tasks \
   -d '{"kind":"sum","payload":{"values":[2,3,5]},"priority":8,"max_attempts":3}'
 ```
 
-Use `GET /api/v1/tasks/{task_id}` to follow execution and `GET /api/v1/tasks` for recent history. `kind` is currently `echo` or `sum`. Supply an ISO-8601 `run_at` value to schedule the task in the future.
+Use `GET /api/v1/tasks/{task_id}` to follow execution, including its persisted transition timeline, and `GET /api/v1/tasks` for recent history. `kind` is currently `echo` or `sum`. Supply an ISO-8601 `run_at` value to schedule the task in the future.
 
 ## Reliability model
 
