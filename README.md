@@ -25,13 +25,15 @@ Use `GET /api/v1/tasks/{task_id}` to follow execution, including its persisted t
 - Idempotency keys prevent duplicate task creation for the same client request.
 - Failed handlers retry with capped exponential backoff and transition to `failed` after `max_attempts`.
 - A worker lease that remains `running` for over a minute is requeued. This is at-least-once execution: a handler can run again after a crash, so external handlers must be idempotent.
+- The crash/commit-boundary case is demonstrated in the [at-least-once recovery note](docs/at-least-once-recovery.md) and an automated regression test.
 - Built-in handlers are deterministic demonstrations, not a general-purpose arbitrary-code execution environment. `echo` and `sum` support normal demos; the bounded `sleep` handler is used only for repeatable worker-crash recovery testing.
-- **Recorded throughput benchmark (November 2, 2026):** three runs of 300
+- **Recorded throughput benchmark (November 21, 2026):** three runs of 300
   deterministic `sum` tasks, 15 concurrent submitters, and three Docker
   workers completed all 900 tasks without failure. Median wall-clock time was
-  **5.088 seconds** (**58.96 tasks/second**), with median P50/P95 end-to-end
-  latencies of **3.35s / 4.48s**. This is a local-machine workload, not a
-  production capacity claim.
+  **5.265 seconds** (**56.98 tasks/second**), with median P50/P95 end-to-end
+  latencies of **3.15s / 4.21s**. This is a local-machine workload, not a
+  production capacity claim. The task transition timeline was enabled for this
+  measurement.
 
 ## Development
 
@@ -74,6 +76,6 @@ claims the task, starts a replacement, and verifies that the replacement
 requeues and completes the task on a later attempt. This demonstrates
 at-least-once processing; an external handler must therefore be idempotent.
 
-**Recorded recovery verification (November 2, 2026):** one deliberately
+**Recorded recovery verification (November 21, 2026):** one deliberately
 terminated in-flight task was requeued and completed successfully on attempt 2
 by a replacement worker.
