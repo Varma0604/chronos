@@ -44,6 +44,7 @@ def test_final_handler_failure_is_sent_to_dead_letter_queue(monkeypatch):
         assert "numeric" in task.error
         assert task.lease_owner is None
         assert task.lease_expires_at is None
+        assert [event.event_type for event in task.events] == ["claimed", "failed"]
 
 
 def test_expired_worker_lease_requeues_task(monkeypatch):
@@ -74,3 +75,4 @@ def test_expired_worker_lease_requeues_task(monkeypatch):
         assert task.lease_owner is None
         assert task.lease_expires_at is None
         assert "lease expired" in task.error.lower()
+        assert task.events[-1].event_type == "lease_expired"
